@@ -178,3 +178,78 @@ def propose_patches(reflection: str, current_goals: str, model: str) -> list:
         func_spec=func_spec,
     )
     return result.get("patches", [])
+
+
+def main(
+    experiment_dir: str,
+    model: str = "claude-code/opus",
+    dry_run: bool = False,
+    agent_manager_path: str = str(AGENT_MANAGER_PATH),
+    backup_dir: str = str(BACKUP_DIR),
+) -> None:
+    results = collect_results(experiment_dir)
+    if not results:
+        print("SkillOpt: no stage results found — nothing to optimize.")
+        return
+
+    non_skipped = [r for r in results.values() if not r.get("skipped")]
+    if non_skipped and all(r.get("buggy_rate", 1.0) == 0.0 for r in non_skipped):
+        print("SkillOpt: all stages have buggy_rate=0 — already optimal, no changes.")
+        return
+
+    current_goals = Path(agent_manager_path).read_text()
+
+    try:
+        print("SkillOpt: running reflect step...")
+        reflection = reflect(current_goals, results, model)
+        print("SkillOpt: running patch proposal step...")
+        patches = propose_patches(reflection, current_goals, model)
+    except Exception as exc:
+        print(f"SkillOpt: Claude call failed ({exc}) — agent_manager.py unchanged.",
+              file=sys.stderr)
+        return
+
+    valid = gate(patches, current_goals)
+    if not valid:
+        print("SkillOpt: no valid improvements identified — agent_manager.py unchanged.")
+        return
+
+    apply(valid, agent_manager_path, backup_dir, dry_run=dry_run)
+    if dry_run:
+        print("SkillOpt: dry-run complete — agent_manager.py unchanged.")
+    else:
+        print(f"SkillOpt: {len(valid)} patch(es) applied to agent_manager.py.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="SkillOpt: improve Stage Goals from BFTS experiment results"
+    )
+    parser.add_argument(
+        "--experiment-dir", required=True,
+        help="Path to experiment directory, e.g. experiments/2026-06-09_..._attempt_0"
+    )
+    parser.add_argument(
+        "--model", default="claude-code/opus",
+        help="Model to use for reflect and patch steps (default: claude-code/opus)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Print the proposed diff without modifying agent_manager.py"
+    )
+    parser.add_argument(
+        "--agent-manager-path", default=str(AGENT_MANAGER_PATH),
+        help="Path to agent_manager.py (default: auto-detected from repo root)"
+    )
+    parser.add_argument(
+        "--backup-dir", default=str(BACKUP_DIR),
+        help="Directory to store Stage Goals backups"
+    )
+    args = parser.parse_args()
+    main(
+        experiment_dir=args.experiment_dir,
+        model=args.model,
+        dry_run=args.dry_run,
+        agent_manager_path=args.agent_manager_path,
+        backup_dir=args.backup_dir,
+    )
