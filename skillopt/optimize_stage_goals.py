@@ -1,7 +1,7 @@
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -84,3 +84,41 @@ def gate(patches: list, current_goals: str) -> list:
 
         valid.append(patch)
     return valid
+
+
+def apply(patches: list, agent_manager_path: str, backup_dir: str,
+          dry_run: bool = False) -> None:
+    """Backup original -> apply patches -> write -> print unified diff."""
+    import difflib
+
+    path = Path(agent_manager_path)
+    content = path.read_text()
+
+    if not dry_run:
+        bdir = Path(backup_dir)
+        bdir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        (bdir / f"{ts}_stage_goals.md").write_text(content)
+
+    patched = content
+    for patch in patches:
+        op = patch["op"]
+        old = patch.get("old", "")
+        new = patch.get("new", "")
+        if op == "replace":
+            patched = patched.replace(old, new, 1)
+        elif op == "delete":
+            patched = patched.replace(old, "", 1)
+        elif op == "add":
+            patched = patched + "\n" + new
+
+    diff = list(difflib.unified_diff(
+        content.splitlines(keepends=True),
+        patched.splitlines(keepends=True),
+        fromfile="agent_manager.py (before)",
+        tofile="agent_manager.py (after)",
+    ))
+    print("".join(diff) if diff else "(no diff)")
+
+    if not dry_run:
+        path.write_text(patched)

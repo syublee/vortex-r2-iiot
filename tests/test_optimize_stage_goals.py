@@ -127,3 +127,77 @@ def test_gate_drops_unknown_op():
     goals = "Focus on getting a basic working implementation."
     patches = [{"stage": "1", "op": "mutate", "old": "basic", "new": "simple"}]
     assert gate(patches, goals) == []
+
+
+def test_apply_dry_run_does_not_modify_file(tmp_path):
+    from skillopt.optimize_stage_goals import apply
+
+    agent_manager = tmp_path / "agent_manager.py"
+    agent_manager.write_text("self.main_stage_goals = {1: 'Focus on basic implementation'}")
+    backup_dir = tmp_path / "backup"
+
+    patches = [{"op": "replace", "old": "basic implementation", "new": "simple implementation"}]
+    apply(patches, str(agent_manager), str(backup_dir), dry_run=True)
+
+    assert "basic implementation" in agent_manager.read_text()
+    assert not backup_dir.exists()
+
+
+def test_apply_creates_backup(tmp_path):
+    from skillopt.optimize_stage_goals import apply
+
+    agent_manager = tmp_path / "agent_manager.py"
+    agent_manager.write_text("self.main_stage_goals = {1: 'Focus on basic implementation'}")
+    backup_dir = tmp_path / "backup"
+
+    patches = [{"op": "replace", "old": "basic implementation", "new": "simple implementation"}]
+    apply(patches, str(agent_manager), str(backup_dir), dry_run=False)
+
+    backups = list(backup_dir.iterdir())
+    assert len(backups) == 1
+    assert backups[0].name.endswith("_stage_goals.md")
+    assert "basic implementation" in backups[0].read_text()
+
+
+def test_apply_modifies_agent_manager(tmp_path):
+    from skillopt.optimize_stage_goals import apply
+
+    agent_manager = tmp_path / "agent_manager.py"
+    agent_manager.write_text("self.main_stage_goals = {1: 'Focus on basic implementation'}")
+    backup_dir = tmp_path / "backup"
+
+    patches = [{"op": "replace", "old": "basic implementation", "new": "simple implementation"}]
+    apply(patches, str(agent_manager), str(backup_dir), dry_run=False)
+
+    content = agent_manager.read_text()
+    assert "simple implementation" in content
+    assert "basic implementation" not in content
+
+
+def test_apply_delete_op(tmp_path):
+    from skillopt.optimize_stage_goals import apply
+
+    agent_manager = tmp_path / "agent_manager.py"
+    agent_manager.write_text("Use THREE datasets. Be creative.")
+    backup_dir = tmp_path / "backup"
+
+    patches = [{"op": "delete", "old": "THREE datasets. ", "new": ""}]
+    apply(patches, str(agent_manager), str(backup_dir), dry_run=False)
+
+    content = agent_manager.read_text()
+    assert "THREE" not in content
+    assert "Be creative." in content
+
+
+def test_apply_prints_diff(tmp_path, capsys):
+    from skillopt.optimize_stage_goals import apply
+
+    agent_manager = tmp_path / "agent_manager.py"
+    agent_manager.write_text("Focus on basic implementation.")
+    backup_dir = tmp_path / "backup"
+
+    patches = [{"op": "replace", "old": "basic", "new": "simple"}]
+    apply(patches, str(agent_manager), str(backup_dir), dry_run=False)
+
+    captured = capsys.readouterr()
+    assert "basic" in captured.out or "simple" in captured.out
