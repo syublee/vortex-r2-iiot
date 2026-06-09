@@ -1,0 +1,52 @@
+# LLM APIs
+anthropic
+backoff
+openai
+# Claude Code CLI / Claude Agent SDK backend (use a Claude subscription instead of
+# API keys -- model names of the form "claude-code/opus" etc.). Requires the
+# `claude` CLI; see docs/USING_CLAUDE_AGENT_SDK.md.
+claude-agent-sdk
+# Viz
+matplotlib
+pypdf
+pymupdf4llm
+seaborn
+# Common Requirements
+# pandapower 2.x requires numpy<2; pin to be safe across releases.
+numpy>=1.26,<2.0
+scipy
+pandas
+tiktoken
+wandb
+tqdm
+rich
+humanize
+dataclasses-json
+funcy
+black
+genson
+shutup
+python-igraph
+coolname
+jsonschema
+omegaconf
+psutil
+botocore
+boto3
+# Power / energy systems stack — AI Scientist Energy
+pandapower>=2.14
+pandapipes>=0.10
+pypsa>=0.27
+pyomo>=6.7
+highspy>=1.7
+cvxpy>=1.5
+# transformers/datasets remain available for ad-hoc text/time-series datasets
+# but are NOT the default data source any more (see energy_datasets.py).
+transformers
+datasets
+# Vortex-R2 IIoT pipeline
+torch
+torchvision
+scikit-learn
+xgboost
+catboost
