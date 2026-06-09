@@ -56,3 +56,31 @@ def _extract_metric_value(node: dict) -> Optional[float]:
         return float(data[0]["final_value"])
     except (KeyError, IndexError, TypeError, ValueError):
         return None
+
+
+def gate(patches: list, current_goals: str) -> list:
+    """Keep only patches that are safe to apply."""
+    valid = []
+    for patch in patches:
+        op = patch.get("op")
+        old = patch.get("old", "")
+        new = patch.get("new", "")
+
+        if op in ("replace", "delete") and old not in current_goals:
+            continue
+
+        if op == "replace":
+            simulated = current_goals.replace(old, new, 1)
+        elif op == "delete":
+            simulated = current_goals.replace(old, "", 1)
+        elif op == "add":
+            simulated = current_goals + "\n" + new
+        else:
+            continue
+
+        ratio = len(simulated) / max(len(current_goals), 1)
+        if not (0.70 <= ratio <= 1.30):
+            continue
+
+        valid.append(patch)
+    return valid

@@ -82,6 +82,9 @@ def propose_patches(reflection: str, current_goals: str, model: str) -> list[dic
     Call Claude with patch.md template.
     Forces JSON schema: [{stage, op, old, new}]
     op in {"replace", "add", "delete"}
+    # add: appends new text at the end of the target stage's goal string
+    # replace: substitutes old text with new text verbatim
+    # delete: removes old text (new field ignored)
     Returns parsed list; empty list is valid (no changes needed).
     """
 
