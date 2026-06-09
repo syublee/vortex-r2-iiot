@@ -138,7 +138,7 @@ def load_cwru():
 def _extract_cwru_features(signal: np.ndarray, window: int = 1024, stride: int = 512) -> np.ndarray:
     """Extract 8 statistical features per window, replicated × 8 channels = 64 features."""
     features = []
-    for start in range(0, len(signal) - window, stride):
+    for start in range(0, len(signal) - window + 1, stride):
         seg = signal[start:start + window]
         rms = float(np.sqrt(np.mean(seg ** 2)))
         feats = [
@@ -234,7 +234,7 @@ def force_directed_layout(W: np.ndarray, T: int = 100, seed: int = 42) -> np.nda
         direction = delta / dist[:, :, None]
         disp = (rep_mag[:, :, None] * direction).sum(axis=1)
 
-        attr_mag = W * dist2 / k_fr
+        attr_mag = W * dist / k_fr
         disp -= (attr_mag[:, :, None] * direction).sum(axis=1)
 
         d = np.linalg.norm(disp, axis=1, keepdims=True)
