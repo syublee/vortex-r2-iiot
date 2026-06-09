@@ -276,9 +276,10 @@ def spiral_pixel_coords(n_features: int, avg_correlation: np.ndarray, k: int) ->
                         positions.append((i, j))
             break
 
+    n_pos = len(positions)
     pixel_coords = np.zeros((n_features, 2), dtype=np.int32)
     for rank, feat_idx in enumerate(order):
-        pixel_coords[feat_idx] = positions[rank]
+        pixel_coords[feat_idx] = positions[rank % n_pos]
 
     return pixel_coords
 
