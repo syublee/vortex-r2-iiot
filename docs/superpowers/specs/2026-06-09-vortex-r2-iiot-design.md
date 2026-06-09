@@ -3,7 +3,7 @@
 ## Goal
 
 Run automated experiments to validate and extend Vortex-R2 — a novel tabular-to-image
-transformation for IIoT sensor data — targeting an IEEE Sensors Letters submission.
+transformation for IIoT sensor data — targeting an **MDPI Sensors** submission.
 
 ---
 
@@ -30,19 +30,19 @@ convergence, improving generalization especially under label scarcity.
 ```
 ai_scientist/
 ├── ideas/
-│   ├── vortex_r2_iiot.md        # Topic: goal, eval, background
-│   └── vortex_r2_iiot.py        # Runfile: Vortex-R2 + baselines + metrics
-├── blank_ieee_lsens_latex/
-│   ├── template.tex             # IEEE Sensors Letters LaTeX template
-│   └── IEEE_lsens.cls           # IEEE class file (user-provided)
-└── perform_ieee_sensors_writeup.py  # Writeup module for IEEE format
+│   ├── vortex_r2_iiot.md        # Topic: goal, eval, background  ← NEW
+│   └── vortex_r2_iiot.py        # Runfile: Vortex-R2 + baselines + metrics  ← NEW
+├── blank_mdpi_latex/            # Already exists — reused as-is
+└── perform_mdpi_writeup.py      # Already exists — reused as-is
 ```
 
 **Data flow:**
 1. BFTS executes `vortex_r2_iiot.py` per search node
 2. Results saved as `results.json` (accuracy, F1, ECE per method/label-ratio/dataset)
 3. Grad-CAM heatmaps and accuracy curves saved as PNG
-4. `perform_ieee_sensors_writeup.py` reads results → fills LaTeX template → compiles PDF
+4. Existing `perform_mdpi_writeup.py` reads results → fills MDPI LaTeX template → compiles PDF
+
+No new writeup module or LaTeX template needed — the existing MDPI pipeline handles this.
 
 ---
 
@@ -96,22 +96,17 @@ Images resized to 224×224. Adam lr=1e-4, batch 32, 50 epochs, early stopping pa
 
 ---
 
-## IEEE Sensors Letters Template Integration
+## MDPI Sensors Template
 
-**`blank_ieee_lsens_latex/template.tex`:**
-- `\documentclass{IEEE_lsens}`
-- Abstract + keywords inside `\IEEEtitleabstractindextext{}` (before `\maketitle`)
-- 2-column, 9pt, `newtxmath` for math fonts
-- `\usepackage[noadjust]{cite}` for citation compression
+Uses the existing `blank_mdpi_latex/` template and `perform_mdpi_writeup.py` — no changes
+needed. MDPI Sensors is an open-access journal with no strict page limit, supporting
+full-length research articles with extended experiments and supplementary material.
 
-**`perform_ieee_sensors_writeup.py`:**
-- Adapted from `perform_mdpi_writeup.py`
-- Sections: Introduction → Related Work → Methodology → Experiments → Conclusion
-- Auto-generates Table 1 (accuracy), Table 2 (Macro-F1), Table 3 (ECE) from results JSON
-- Auto-inserts Grad-CAM and accuracy-vs-label-ratio figures
-- 4-page limit enforced via LLM prompt instruction
-- Max ~15 references (IEEE Sensors Letters guideline)
-- Calls `compile_latex()` with pdflatex + bibtex (same as MDPI module)
+**`perform_mdpi_writeup.py` will generate:**
+- Sections: Introduction → Related Work → Methodology → Experiments → Discussion → Conclusion
+- Table 1 (accuracy), Table 2 (Macro-F1), Table 3 (ECE) from results JSON
+- Grad-CAM heatmaps and accuracy-vs-label-ratio figures
+- MDPI citation style with no reference count limit
 
 ---
 
