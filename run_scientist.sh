@@ -141,7 +141,7 @@ echo "============================================================"
 # --- Step 1: Ideation --------------------------------------------------------
 if [[ "$SKIP_IDEATION" -eq 0 ]]; then
   info "Step 1/2 — Ideation 시작"
-  python ai_scientist/generate_ideas_and_experiments.py \
+  python ai_scientist/perform_ideation_temp_free.py \
     --workshop-file "$TOPIC_MD" \
     --model "$MODEL" \
     --max-num-generations "$MAX_GEN" \
