@@ -122,3 +122,59 @@ def apply(patches: list, agent_manager_path: str, backup_dir: str,
 
     if not dry_run:
         path.write_text(patched)
+
+
+def reflect(current_goals: str, results: dict, model: str) -> str:
+    """Call Claude to identify which Stage Goals caused failures."""
+    from ai_scientist.treesearch.backend import query
+
+    template = (PROMPTS_DIR / "reflect.md").read_text()
+    user_message = template.format(
+        current_goals=current_goals,
+        results=json.dumps(results, indent=2),
+    )
+    return query(system_message=None, user_message=user_message, model=model)
+
+
+def propose_patches(reflection: str, current_goals: str, model: str) -> list:
+    """Call Claude to propose structured JSON patches."""
+    from ai_scientist.treesearch.backend import query, FunctionSpec
+
+    template = (PROMPTS_DIR / "patch.md").read_text()
+    user_message = template.format(
+        reflection=reflection,
+        current_goals=current_goals,
+    )
+
+    func_spec = FunctionSpec(
+        name="propose_patches",
+        description="Return a list of text patches for Stage Goals",
+        json_schema={
+            "type": "object",
+            "properties": {
+                "patches": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "stage":  {"type": "string"},
+                            "op":     {"type": "string", "enum": ["replace", "add", "delete"]},
+                            "old":    {"type": "string"},
+                            "new":    {"type": "string"},
+                        },
+                        "required": ["stage", "op", "old"],
+                    },
+                }
+            },
+            "required": ["patches"],
+        },
+    )
+
+    result = query(
+        system_message=None,
+        user_message=user_message,
+        model=model,
+        func_spec=func_spec,
+    )
+    return result.get("patches", [])
