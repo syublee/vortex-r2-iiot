@@ -80,3 +80,50 @@ def test_collect_results_all_buggy_best_metric_is_none(tmp_path):
     results = collect_results(str(tmp_path))
     assert results["stage_3_creative_research"]["best_metric"] is None
     assert results["stage_3_creative_research"]["buggy_rate"] == pytest.approx(1.0)
+
+
+def test_gate_drops_nonexistent_old_text():
+    from skillopt.optimize_stage_goals import gate
+
+    goals = "Focus on getting a basic working implementation."
+    patches = [{"stage": "1", "op": "replace", "old": "DOES NOT EXIST", "new": "simple"}]
+    assert gate(patches, goals) == []
+
+
+def test_gate_keeps_valid_replace():
+    from skillopt.optimize_stage_goals import gate
+
+    goals = "Focus on getting a basic working implementation."
+    patches = [{"stage": "1", "op": "replace",
+                "old": "basic working implementation",
+                "new": "working implementation"}]
+    result = gate(patches, goals)
+    assert len(result) == 1
+    assert result[0]["new"] == "working implementation"
+
+
+def test_gate_drops_oversized_patch():
+    from skillopt.optimize_stage_goals import gate
+
+    goals = "Short."  # 6 chars
+    # add 100 chars -> ratio >> 1.30
+    patches = [{"stage": "1", "op": "add", "old": "", "new": "x" * 100}]
+    assert gate(patches, goals) == []
+
+
+def test_gate_keeps_delete_op():
+    from skillopt.optimize_stage_goals import gate
+
+    goals = "Focus on one dataset only. Avoid three datasets if possible."
+    patches = [{"stage": "1", "op": "delete",
+                "old": " if possible", "new": ""}]
+    result = gate(patches, goals)
+    assert len(result) == 1
+
+
+def test_gate_drops_unknown_op():
+    from skillopt.optimize_stage_goals import gate
+
+    goals = "Focus on getting a basic working implementation."
+    patches = [{"stage": "1", "op": "mutate", "old": "basic", "new": "simple"}]
+    assert gate(patches, goals) == []
