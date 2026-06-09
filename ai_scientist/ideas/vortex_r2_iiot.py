@@ -348,7 +348,7 @@ def deepinsight_transform(X_train: np.ndarray, X_all: np.ndarray, k: int = 32, s
 
     n_features = X_train.shape[1]
     perplexity = min(30, n_features - 1)
-    tsne = TSNE(n_components=2, random_state=seed, perplexity=perplexity, n_iter=500)
+    tsne = TSNE(n_components=2, random_state=seed, perplexity=perplexity, max_iter=500)
     pos = tsne.fit_transform(X_tr_sc.T)
     return _layout_to_images(X_all_sc, pos, k)
 
