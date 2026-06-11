@@ -35,6 +35,9 @@ data_dir = os.path.join(os.getcwd(), "data", "vortex_r2")
 os.makedirs(working_dir, exist_ok=True)
 os.makedirs(data_dir, exist_ok=True)
 
+# Track which datasets used real downloads vs synthetic fallback
+DATA_PROVENANCE: dict = {}
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 1: Dataset loaders
@@ -65,9 +68,11 @@ def load_secom():
         X = X[:, std > 0]
         np.save(cx, X); np.save(cy, y)
         print(f"[SECOM] Loaded: {X.shape}, classes={np.unique(y)}")
+        DATA_PROVENANCE["secom"] = "real"
         return X, y
     except Exception as e:
         print(f"[SECOM] Download failed ({e}), using synthetic data.")
+        DATA_PROVENANCE["secom"] = f"synthetic (download failed: {e})"
         rng = np.random.RandomState(0)
         X = rng.randn(1567, 590).astype(np.float32)
         y = rng.randint(0, 2, 1567)
@@ -88,9 +93,11 @@ def load_epileptic_seizure():
         y = (df.iloc[:, -1].values - 1).astype(np.int64)
         np.save(cx, X); np.save(cy, y)
         print(f"[Epileptic] Loaded: {X.shape}, classes={np.unique(y)}")
+        DATA_PROVENANCE["epileptic"] = "real"
         return X, y
     except Exception as e:
         print(f"[Epileptic] Download failed ({e}), using synthetic data.")
+        DATA_PROVENANCE["epileptic"] = f"synthetic (download failed: {e})"
         rng = np.random.RandomState(1)
         X = rng.randn(11500, 178).astype(np.float32)
         y = rng.randint(0, 5, 11500)
@@ -126,9 +133,11 @@ def load_cwru():
         y = np.concatenate(all_y)
         np.save(cx, X); np.save(cy, y)
         print(f"[CWRU] Loaded: {X.shape}, classes={np.unique(y)}")
+        DATA_PROVENANCE["cwru"] = "real"
         return X, y
     except Exception as e:
         print(f"[CWRU] Download failed ({e}), using synthetic data.")
+        DATA_PROVENANCE["cwru"] = f"synthetic (download failed: {e})"
         rng = np.random.RandomState(2)
         X = rng.randn(9600, 64).astype(np.float32)
         y = np.repeat(np.arange(4), 2400)
@@ -136,24 +145,109 @@ def load_cwru():
 
 
 def _extract_cwru_features(signal: np.ndarray, window: int = 1024, stride: int = 512) -> np.ndarray:
-    """Extract 8 statistical features per window, replicated × 8 channels = 64 features."""
+    """Extract 64 physically diverse features per window (no replication).
+
+    Feature groups (8 features each, 8 groups = 64 total):
+      G1 time-domain stats, G2 sub-window RMS (8 octants),
+      G3 FFT band energy (8 bands 0-6 kHz), G4 spectral shape,
+      G5 Hilbert-envelope stats, G6 quarter-segment moments,
+      G7 impulse/threshold features, G8 temporal shape features.
+    """
     features = []
     for start in range(0, len(signal) - window + 1, stride):
         seg = signal[start:start + window]
+        std = float(seg.std()) or 1e-8
         rms = float(np.sqrt(np.mean(seg ** 2)))
-        feats = [
+
+        # G1: global time-domain statistics (8)
+        g1 = [
             float(seg.mean()),
-            float(seg.std()),
+            std,
             rms,
-            float(np.mean((seg - seg.mean()) ** 4) / max(seg.std() ** 4, 1e-8)),
-            float(np.mean((seg - seg.mean()) ** 3) / max(seg.std() ** 3, 1e-8)),
-            float(seg.max() / max(rms, 1e-8)),
-            float(seg.max() - seg.min()),
+            float(np.mean((seg - seg.mean()) ** 4) / std ** 4),   # kurtosis
+            float(np.mean((seg - seg.mean()) ** 3) / std ** 3),   # skewness
+            float(seg.max() / max(rms, 1e-8)),                     # crest factor
+            float(seg.max() - seg.min()),                          # peak-to-peak
             float(np.corrcoef(seg[:-1], seg[1:])[0, 1]) if len(seg) > 1 else 0.0,
         ]
+
+        # G2: RMS of 8 equal sub-windows (localized energy)
+        sub_len = window // 8
+        g2 = [float(np.sqrt(np.mean(seg[i*sub_len:(i+1)*sub_len] ** 2))) for i in range(8)]
+
+        # G3: FFT band energy (8 bands, 0–6 kHz assuming 12 kHz sampling)
+        fft_mag = np.abs(np.fft.rfft(seg))
+        freqs = np.fft.rfftfreq(window, d=1.0 / 12000)
+        total_pwr = float(np.sum(fft_mag ** 2)) or 1e-8
+        band_edges = np.linspace(0, 6000, 9)
+        g3 = []
+        for i in range(8):
+            mask = (freqs >= band_edges[i]) & (freqs < band_edges[i + 1])
+            g3.append(float(np.sum(fft_mag[mask] ** 2) / total_pwr))
+
+        # G4: spectral shape descriptors (8)
+        fft_prob = fft_mag ** 2 / total_pwr
+        n_freq = len(freqs)
+        centroid = float(np.dot(freqs, fft_prob[:n_freq]))
+        bandwidth = float(np.sqrt(np.dot((freqs - centroid) ** 2, fft_prob[:n_freq])))
+        flatness = float(np.exp(np.mean(np.log(fft_mag[:n_freq] + 1e-10))) / (np.mean(fft_mag[:n_freq]) + 1e-10))
+        cum_pwr = np.cumsum(fft_mag ** 2)
+        rolloff_idx = int(np.searchsorted(cum_pwr, 0.85 * cum_pwr[-1]))
+        rolloff = float(freqs[min(rolloff_idx, n_freq - 1)])
+        spectral_entropy = float(-np.sum(fft_prob[:n_freq] * np.log(fft_prob[:n_freq] + 1e-10)))
+        peak_freq = float(freqs[np.argmax(fft_mag[:n_freq])])
+        hf_ratio = float(np.sum(fft_mag[freqs >= 3000] ** 2) / total_pwr)
+        spectral_slope = float(np.polyfit(freqs[:n_freq], fft_mag[:n_freq], 1)[0]) if n_freq > 1 else 0.0
+        g4 = [centroid / 6000, bandwidth / 6000, flatness, rolloff / 6000,
+              spectral_entropy / 10.0, peak_freq / 6000, hf_ratio, np.clip(spectral_slope / 1e-3, -5, 5)]
+
+        # G5: Hilbert-envelope statistics (8)
+        from scipy.signal import hilbert as scipy_hilbert
+        try:
+            env = np.abs(scipy_hilbert(seg))
+        except Exception:
+            env = np.abs(seg)
+        env_rms = float(np.sqrt(np.mean(env ** 2)))
+        env_std = float(env.std()) or 1e-8
+        g5 = [
+            float(env.mean()),
+            env_std,
+            env_rms,
+            float(np.mean((env - env.mean()) ** 4) / env_std ** 4),
+            float(np.mean((env - env.mean()) ** 3) / env_std ** 3),
+            float(env.max() / max(env_rms, 1e-8)),
+            float(env.max() - env.min()),
+            float(np.corrcoef(env[:-1], env[1:])[0, 1]) if len(env) > 1 else 0.0,
+        ]
+
+        # G6: per-quarter mean and std (4 quarters × 2 = 8)
+        q = window // 4
+        g6 = []
+        for i in range(4):
+            sub = seg[i * q:(i + 1) * q]
+            g6 += [float(sub.mean()), float(sub.std())]
+
+        # G7: impulse / threshold features at 4 σ levels (8)
+        g7 = []
+        for thr in [2.0, 3.0, 4.0, 5.0]:
+            rate = float(np.mean(np.abs(seg) > thr * std))
+            amp = float(np.mean(np.abs(seg[np.abs(seg) > thr * std])) if rate > 0 else 0.0)
+            g7 += [rate, amp / max(rms, 1e-8)]
+
+        # G8: temporal shape features (8)
+        zcr = float(np.mean(np.diff(np.sign(seg)) != 0))
+        slope_changes = float(np.mean(np.diff(np.sign(np.diff(seg))) != 0))
+        waveform_factor = float(rms / max(np.mean(np.abs(seg)), 1e-8))
+        shape_factor = float(rms / max(seg.max() - seg.min(), 1e-8))
+        lag2_corr = float(np.corrcoef(seg[:-2], seg[2:])[0, 1]) if len(seg) > 2 else 0.0
+        lag4_corr = float(np.corrcoef(seg[:-4], seg[4:])[0, 1]) if len(seg) > 4 else 0.0
+        energy_ratio = float(np.mean(seg[window // 2:] ** 2) / max(np.mean(seg[:window // 2] ** 2), 1e-8))
+        peak_asym = float((seg.max() + seg.min()) / max(seg.max() - seg.min(), 1e-8))
+        g8 = [zcr, slope_changes, waveform_factor, shape_factor, lag2_corr, lag4_corr, energy_ratio, peak_asym]
+
+        feats = g1 + g2 + g3 + g4 + g5 + g6 + g7 + g8  # exactly 64
         features.append(feats)
-    arr = np.array(features, dtype=np.float32)
-    return np.tile(arr, 8)
+    return np.array(features, dtype=np.float32)
 
 
 def load_uci_har():
@@ -181,9 +275,11 @@ def load_uci_har():
         y = np.concatenate([y_train, y_test])
         np.save(cx, X); np.save(cy, y)
         print(f"[UCI HAR] Loaded: {X.shape}, classes={np.unique(y)}")
+        DATA_PROVENANCE["uci_har"] = "real"
         return X, y
     except Exception as e:
         print(f"[UCI HAR] Download failed ({e}), using synthetic data.")
+        DATA_PROVENANCE["uci_har"] = f"synthetic (download failed: {e})"
         rng = np.random.RandomState(3)
         X = rng.randn(10299, 561).astype(np.float32)
         y = np.repeat(np.arange(6), 10299 // 6 + 1)[:10299]
@@ -675,13 +771,24 @@ def main():
                         per_seed[mname][k_].append(r[k_])
 
             for method in list(IMG_METHODS) + list(TREE_METHODS):
+                acc_seeds = per_seed[method]["accuracy"]
+                f1_seeds = per_seed[method]["f1"]
+                ece_seeds = per_seed[method]["ece"]
+                n = len(acc_seeds)
+                # 95% CI via t-distribution (t_{n-1, 0.975})
+                from scipy.stats import t as t_dist
+                t_crit = float(t_dist.ppf(0.975, df=max(n - 1, 1))) if n > 1 else 0.0
                 all_results[ds_name][method][ratio_str] = {
-                    "accuracy": float(np.mean(per_seed[method]["accuracy"])),
-                    "accuracy_std": float(np.std(per_seed[method]["accuracy"])),
-                    "f1": float(np.mean(per_seed[method]["f1"])),
-                    "f1_std": float(np.std(per_seed[method]["f1"])),
-                    "ece": float(np.mean(per_seed[method]["ece"])),
-                    "ece_std": float(np.std(per_seed[method]["ece"])),
+                    "accuracy": float(np.mean(acc_seeds)),
+                    "accuracy_std": float(np.std(acc_seeds, ddof=1)) if n > 1 else 0.0,
+                    "accuracy_ci95": float(t_crit * np.std(acc_seeds, ddof=1) / np.sqrt(n)) if n > 1 else 0.0,
+                    "accuracy_seeds": [float(v) for v in acc_seeds],
+                    "f1": float(np.mean(f1_seeds)),
+                    "f1_std": float(np.std(f1_seeds, ddof=1)) if n > 1 else 0.0,
+                    "f1_seeds": [float(v) for v in f1_seeds],
+                    "ece": float(np.mean(ece_seeds)),
+                    "ece_std": float(np.std(ece_seeds, ddof=1)) if n > 1 else 0.0,
+                    "ece_seeds": [float(v) for v in ece_seeds],
                 }
 
     primary_accs = [
@@ -700,6 +807,34 @@ def main():
         )
         print(f"  {ds}: Vortex-R2={acc:.3f}  best_baseline={best_bl:.3f}  delta={acc-best_bl:+.3f}")
 
+    # Wilcoxon signed-rank tests: Vortex-R2 vs each baseline at 1% label ratio
+    from scipy.stats import wilcoxon
+    significance_tests = {}
+    for ds in DATASET_LOADERS:
+        significance_tests[ds] = {}
+        vortex_seeds = all_results[ds]["vortex_r2"].get("0.01", {}).get("accuracy_seeds", [])
+        for bl in list(IMG_METHODS) + list(TREE_METHODS):
+            if bl == "vortex_r2":
+                continue
+            bl_seeds = all_results[ds][bl].get("0.01", {}).get("accuracy_seeds", [])
+            if len(vortex_seeds) >= 5 and len(bl_seeds) >= 5:
+                try:
+                    diffs = [v - b for v, b in zip(vortex_seeds, bl_seeds)]
+                    if all(d == 0 for d in diffs):
+                        p_val = 1.0
+                    else:
+                        _, p_val = wilcoxon(vortex_seeds, bl_seeds, alternative="two-sided")
+                    significance_tests[ds][bl] = {
+                        "p_wilcoxon": float(p_val),
+                        "significant_p05": bool(p_val < 0.05),
+                        "mean_diff": float(np.mean(vortex_seeds) - np.mean(bl_seeds)),
+                    }
+                    print(f"  Wilcoxon {ds} vortex_r2 vs {bl} @1%: p={p_val:.4f} Δacc={np.mean(vortex_seeds)-np.mean(bl_seeds):+.4f}")
+                except Exception as e:
+                    significance_tests[ds][bl] = {"error": str(e)}
+
+    print(f"\nData provenance: {DATA_PROVENANCE}")
+
     final = {
         "hyperparams": {"T": T, "tau": TAU, "k": K, "backbone": BACKBONE},
         "datasets": list(DATASET_LOADERS.keys()),
@@ -707,6 +842,8 @@ def main():
         "label_ratios": LABEL_RATIOS,
         "results": all_results,
         "primary_metric": primary_metric,
+        "significance_tests_1pct": significance_tests,
+        "data_provenance": DATA_PROVENANCE,
     }
 
     results_path = os.path.join(working_dir, "results.json")
