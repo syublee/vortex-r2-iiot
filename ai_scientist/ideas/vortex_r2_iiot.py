@@ -521,6 +521,37 @@ def raw_cnn_transform(X_train: np.ndarray, X_all: np.ndarray, k: int = 32) -> np
     return padded.reshape(-1, k, k)
 
 
+def random_layout_transform(X_train: np.ndarray, X_all: np.ndarray, k: int = 32, seed: int = 42) -> np.ndarray:
+    """Random-Layout: assign features to pixels in random order (trivial spatial control).
+
+    This is the key control requested by Reviewer Q1: if a layout is 'largely inert'
+    vs baselines, a random layout should perform no worse than structured layouts.
+    The layout is seeded from X_train shape + seed so it is deterministic per run
+    but varies across seeds.
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.RandomState(seed)
+    scaler = StandardScaler()
+    X_tr_sc = scaler.fit_transform(X_train)
+    X_all_sc = scaler.transform(X_all)
+
+    n_features = X_train.shape[1]
+    n_pixels = k * k
+    # Random permutation of feature → pixel assignment
+    perm = rng.permutation(min(n_features, n_pixels))
+    pixel_coords = np.zeros((n_features, 2), dtype=np.int32)
+    for fi in range(min(n_features, n_pixels)):
+        p = int(perm[fi])
+        pixel_coords[fi] = [p // k, p % k]
+    # Features beyond n_pixels map to the last pixel (averaged in rasterize)
+    if n_features > n_pixels:
+        for fi in range(n_pixels, n_features):
+            pixel_coords[fi] = [k - 1, k - 1]
+
+    return np.array([rasterize(X_all_sc[i], pixel_coords, k) for i in range(len(X_all_sc))])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4: Metrics
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -768,6 +799,7 @@ def main():
         "igtd": lambda Xtr, Xall, s: igtd_transform(Xtr, Xall, K, s),
         "refined": lambda Xtr, Xall, s: refined_transform(Xtr, Xall, K, s),
         "raw_cnn": lambda Xtr, Xall, s: raw_cnn_transform(Xtr, Xall, K),
+        "random_layout": lambda Xtr, Xall, s: random_layout_transform(Xtr, Xall, K, s),
     }
     TREE_METHODS = {
         "xgboost": train_eval_xgboost,
