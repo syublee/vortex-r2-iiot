@@ -48,6 +48,7 @@ def load_secom():
     cx = os.path.join(data_dir, "secom_X.npy")
     cy = os.path.join(data_dir, "secom_y.npy")
     if os.path.exists(cx) and os.path.exists(cy):
+        DATA_PROVENANCE["secom"] = "real"
         return np.load(cx), np.load(cy)
     try:
         X_df = pd.read_csv(
@@ -79,44 +80,58 @@ def load_secom():
         return X, y
 
 
-def load_epileptic_seizure():
-    """Epileptic Seizure Recognition (UCI). 178 features, 11500 samples, 5 classes."""
-    cx = os.path.join(data_dir, "epileptic_X.npy")
-    cy = os.path.join(data_dir, "epileptic_y.npy")
+def load_steel_plates():
+    """Steel Plates Faults (UCI #198). 27 features, 1941 samples, 7 fault classes.
+
+    Industrial fault detection dataset from steel plate manufacturing.
+    More IIoT-relevant than EEG proxies.
+    """
+    cx = os.path.join(data_dir, "steel_X.npy")
+    cy = os.path.join(data_dir, "steel_y.npy")
     if os.path.exists(cx) and os.path.exists(cy):
+        DATA_PROVENANCE["steel_plates"] = "real"
         return np.load(cx), np.load(cy)
     try:
-        df = pd.read_csv(
-            "https://archive.ics.uci.edu/ml/machine-learning-databases/00388/data.csv"
+        req = urllib.request.Request(
+            "https://archive.ics.uci.edu/ml/machine-learning-databases/00198/Faults.NNA",
+            headers={"User-Agent": "Mozilla/5.0"},
         )
-        X = df.iloc[:, 1:-1].values.astype(np.float32)
-        y = (df.iloc[:, -1].values - 1).astype(np.int64)
+        import io
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read().decode()
+        rows = [[float(x) for x in line.split()] for line in raw.strip().split("\n") if line.strip()]
+        arr = np.array(rows, dtype=np.float32)
+        X = arr[:, :27]
+        y = arr[:, 27:].argmax(axis=1).astype(np.int64)
         np.save(cx, X); np.save(cy, y)
-        print(f"[Epileptic] Loaded: {X.shape}, classes={np.unique(y)}")
-        DATA_PROVENANCE["epileptic"] = "real"
+        print(f"[Steel Plates] Loaded: {X.shape}, classes={np.unique(y)}")
+        DATA_PROVENANCE["steel_plates"] = "real"
         return X, y
     except Exception as e:
-        print(f"[Epileptic] Download failed ({e}), using synthetic data.")
-        DATA_PROVENANCE["epileptic"] = f"synthetic (download failed: {e})"
+        print(f"[Steel Plates] Download failed ({e}), using synthetic data.")
+        DATA_PROVENANCE["steel_plates"] = f"synthetic (download failed: {e})"
         rng = np.random.RandomState(1)
-        X = rng.randn(11500, 178).astype(np.float32)
-        y = rng.randint(0, 5, 11500)
+        X = rng.randn(1941, 27).astype(np.float32)
+        y = rng.randint(0, 7, 1941)
         return X, y
 
 
 def load_cwru():
-    """CWRU Bearing Fault: 64 statistical features, ~9600 samples, 4 classes."""
+    """CWRU Bearing Fault: 64 statistical features, ~1422 samples, 4 classes."""
     cx = os.path.join(data_dir, "cwru_X.npy")
     cy = os.path.join(data_dir, "cwru_y.npy")
     if os.path.exists(cx) and os.path.exists(cy):
+        DATA_PROVENANCE["cwru"] = "real"
         return np.load(cx), np.load(cy)
     try:
         from scipy.io import loadmat
+        # File IDs from Case Western Reserve University bearing data center
+        # Normal: 97, Ball fault 0.007": 105, IR fault 0.007": 109, OR fault 0.007"@6: 130
         files = {
-            0: "https://engineering.case.edu/sites/default/files/2023-03/Normal_0.mat",
-            1: "https://engineering.case.edu/sites/default/files/2023-03/B007_0.mat",
-            2: "https://engineering.case.edu/sites/default/files/2023-03/IR007_0.mat",
-            3: "https://engineering.case.edu/sites/default/files/2023-03/OR007@6_0.mat",
+            0: "https://engineering.case.edu/sites/default/files/97.mat",
+            1: "https://engineering.case.edu/sites/default/files/105.mat",
+            2: "https://engineering.case.edu/sites/default/files/109.mat",
+            3: "https://engineering.case.edu/sites/default/files/130.mat",
         }
         all_X, all_y = [], []
         for label, url in files.items():
@@ -255,6 +270,7 @@ def load_uci_har():
     cx = os.path.join(data_dir, "har_X.npy")
     cy = os.path.join(data_dir, "har_y.npy")
     if os.path.exists(cx) and os.path.exists(cy):
+        DATA_PROVENANCE["uci_har"] = "real"
         return np.load(cx), np.load(cy)
     try:
         base = "https://archive.ics.uci.edu/ml/machine-learning-databases/00240/"
@@ -659,6 +675,31 @@ def train_eval_catboost(X_train, y_train, X_test, y_test, seed=42) -> dict:
     }
 
 
+def train_eval_lda(X_train, y_train, X_test, y_test, seed=42) -> dict:
+    """Regularized LDA (Ledoit-Wolf shrinkage) — direct tabular baseline for within-class whitening comparison."""
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import accuracy_score, f1_score
+
+    scaler = StandardScaler()
+    X_tr = scaler.fit_transform(X_train)
+    X_te = scaler.transform(X_test)
+    model = LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")
+    try:
+        model.fit(X_tr, y_train)
+    except Exception:
+        # Fallback: SVD solver without shrinkage when lsqr fails (e.g., n_samples < n_features)
+        model = LinearDiscriminantAnalysis(solver="svd")
+        model.fit(X_tr, y_train)
+    preds = model.predict(X_te)
+    probs = model.predict_proba(X_te)
+    return {
+        "accuracy": float(accuracy_score(y_test, preds)),
+        "f1": float(f1_score(y_test, preds, average="macro", zero_division=0)),
+        "ece": compute_ece(probs, y_test),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 7: Evaluation helpers
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -681,7 +722,7 @@ def stratified_subsample(X: np.ndarray, y: np.ndarray, ratio: float, seed: int):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_accuracy_curves(results: dict, output_path: str):
-    """Accuracy vs label ratio for each method and dataset."""
+    """Accuracy vs label ratio for each method and dataset, with 95% CI error bars."""
     datasets = list(results.keys())
     if not datasets:
         return
@@ -693,7 +734,8 @@ def plot_accuracy_curves(results: dict, output_path: str):
         ax = axes[0, j]
         for method in methods:
             accs = [results[ds].get(method, {}).get(str(r), {}).get("accuracy", 0.0) for r in LABEL_RATIOS]
-            ax.plot(ratio_labels, accs, marker="o", label=method)
+            cis = [results[ds].get(method, {}).get(str(r), {}).get("accuracy_ci95", 0.0) for r in LABEL_RATIOS]
+            ax.errorbar(ratio_labels, accs, yerr=cis, marker="o", label=method, capsize=3, capthick=1)
         ax.set_title(ds, fontsize=10)
         ax.set_xlabel("Label ratio")
         ax.set_ylabel("Accuracy")
@@ -715,7 +757,7 @@ def main():
 
     DATASET_LOADERS = {
         "secom": load_secom,
-        "epileptic": load_epileptic_seizure,
+        "steel_plates": load_steel_plates,
         "cwru": load_cwru,
         "uci_har": load_uci_har,
     }
@@ -730,20 +772,34 @@ def main():
     TREE_METHODS = {
         "xgboost": train_eval_xgboost,
         "catboost": train_eval_catboost,
+        "lda": train_eval_lda,
     }
 
     all_results = {}
+    # Track per-method wall-clock training time (seconds) for compute cost comparison
+    compute_times: dict = {m: [] for m in list(IMG_METHODS) + list(TREE_METHODS)}
+
+    import time
 
     for ds_name, loader in DATASET_LOADERS.items():
         print(f"\n{'='*60}\nDataset: {ds_name}")
         X, y = loader()
+        # Augment provenance with row/feature counts for reviewer verification
+        prov = DATA_PROVENANCE.get(ds_name, "unknown")
+        DATA_PROVENANCE[ds_name] = {
+            "status": prov if isinstance(prov, str) else prov.get("status", "unknown"),
+            "n_samples": int(X.shape[0]),
+            "n_features": int(X.shape[1]),
+            "n_classes": int(len(np.unique(y))),
+        }
         n_classes = len(np.unique(y))
-        all_results[ds_name] = {m: {} for m in list(IMG_METHODS) + list(TREE_METHODS)}
+        all_methods = list(IMG_METHODS) + list(TREE_METHODS)
+        all_results[ds_name] = {m: {} for m in all_methods}
 
         for ratio in LABEL_RATIOS:
             ratio_str = str(ratio)
             print(f"  ratio={ratio*100:.0f}%")
-            per_seed = {m: {"accuracy": [], "f1": [], "ece": []} for m in list(IMG_METHODS) + list(TREE_METHODS)}
+            per_seed = {m: {"accuracy": [], "f1": [], "ece": []} for m in all_methods}
 
             for seed in range(N_SEEDS):
                 X_tv, X_te, y_tv, y_te = train_test_split(X, y, test_size=0.2, stratify=y, random_state=seed)
@@ -754,7 +810,9 @@ def main():
                     try:
                         imgs = fn(X_tr, X_all, seed)
                         imgs_tr, imgs_te = imgs[:len(X_tr)], imgs[len(X_tr):]
+                        t0 = time.time()
                         r = train_eval_cnn(imgs_tr, y_tr, imgs_te, y_te, BACKBONE, N_EPOCHS, LR, BATCH_SIZE, PATIENCE, seed, n_classes)
+                        compute_times[mname].append(time.time() - t0)
                     except Exception as e:
                         print(f"    [{mname}] failed: {e}")
                         r = {"accuracy": 0.0, "f1": 0.0, "ece": 1.0}
@@ -763,14 +821,16 @@ def main():
 
                 for mname, fn in TREE_METHODS.items():
                     try:
+                        t0 = time.time()
                         r = fn(X_tr, y_tr, X_te, y_te, seed)
+                        compute_times[mname].append(time.time() - t0)
                     except Exception as e:
                         print(f"    [{mname}] failed: {e}")
                         r = {"accuracy": 0.0, "f1": 0.0, "ece": 1.0}
                     for k_ in ["accuracy", "f1", "ece"]:
                         per_seed[mname][k_].append(r[k_])
 
-            for method in list(IMG_METHODS) + list(TREE_METHODS):
+            for method in all_methods:
                 acc_seeds = per_seed[method]["accuracy"]
                 f1_seeds = per_seed[method]["f1"]
                 ece_seeds = per_seed[method]["ece"]
@@ -835,6 +895,22 @@ def main():
 
     print(f"\nData provenance: {DATA_PROVENANCE}")
 
+    # Summarise compute cost: mean training wall-clock time per method (seconds)
+    compute_cost_summary = {
+        m: {"mean_s": float(np.mean(ts)), "n_runs": len(ts)}
+        for m, ts in compute_times.items() if ts
+    }
+    cnn_mean = float(np.mean([
+        v["mean_s"] for k, v in compute_cost_summary.items() if k in IMG_METHODS
+    ])) if any(k in IMG_METHODS for k in compute_cost_summary) else 0.0
+    gbt_mean = float(np.mean([
+        v["mean_s"] for k, v in compute_cost_summary.items() if k in ("xgboost", "catboost")
+    ])) if any(k in ("xgboost", "catboost") for k in compute_cost_summary) else 0.0
+    if gbt_mean > 0:
+        compute_cost_summary["cnn_vs_gbt_ratio"] = round(cnn_mean / gbt_mean, 2)
+    cost_str = {k: f"{v['mean_s']:.1f}s" for k, v in compute_cost_summary.items() if isinstance(v, dict) and "mean_s" in v}
+    print(f"Compute cost (mean train s): {cost_str}")
+
     final = {
         "hyperparams": {"T": T, "tau": TAU, "k": K, "backbone": BACKBONE},
         "datasets": list(DATASET_LOADERS.keys()),
@@ -844,6 +920,7 @@ def main():
         "primary_metric": primary_metric,
         "significance_tests_1pct": significance_tests,
         "data_provenance": DATA_PROVENANCE,
+        "compute_cost": compute_cost_summary,
     }
 
     results_path = os.path.join(working_dir, "results.json")
