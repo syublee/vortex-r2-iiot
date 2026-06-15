@@ -575,6 +575,27 @@ def compute_ece(probs: np.ndarray, labels: np.ndarray, n_bins: int = 10) -> floa
 # SECTION 5: CNN training
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _oversample_images(X_imgs: np.ndarray, y: np.ndarray, target_ratio: float = 0.3, seed: int = 42) -> tuple:
+    """Random oversampling: bring each minority class up to target_ratio × majority count."""
+    rng = np.random.default_rng(seed)
+    classes, counts = np.unique(y, return_counts=True)
+    majority = int(counts.max())
+    target = max(int(majority * target_ratio), 1)
+    extras_X, extras_y = [], []
+    for cls, cnt in zip(classes, counts):
+        if cnt < target:
+            idx = np.where(y == cls)[0]
+            extra = rng.choice(idx, size=target - cnt, replace=True)
+            extras_X.append(X_imgs[extra])
+            extras_y.append(y[extra])
+    if not extras_X:
+        return X_imgs, y
+    X_out = np.concatenate([X_imgs] + extras_X, axis=0)
+    y_out = np.concatenate([y] + extras_y, axis=0)
+    perm = rng.permutation(len(y_out))
+    return X_out[perm], y_out[perm]
+
+
 def train_eval_cnn(
     X_imgs_train: np.ndarray,
     y_train: np.ndarray,
@@ -588,9 +609,15 @@ def train_eval_cnn(
     seed: int = 42,
     n_classes: int = None,
 ) -> dict:
-    """Fine-tune pretrained CNN on k×k grayscale images. Returns accuracy, f1, ece."""
+    """Fine-tune pretrained CNN on k×k grayscale images. Returns accuracy, f1, ece.
+
+    When the labeled training set is class-imbalanced (min class fraction < 0.15),
+    applies random oversampling of minority classes and focal loss (γ=2) with
+    inverse-frequency class weights.
+    """
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     import torchvision.models as models
     from torch.utils.data import DataLoader, TensorDataset
     from sklearn.metrics import accuracy_score, f1_score
@@ -600,6 +627,19 @@ def train_eval_cnn(
 
     if n_classes is None:
         n_classes = len(np.unique(y_train))
+
+    # ── Imbalance detection ────────────────────────────────────────────────────
+    classes, counts = np.unique(y_train, return_counts=True)
+    min_fraction = counts.min() / len(y_train)
+    imbalanced = min_fraction < 0.15  # triggers for SECOM (6.6%) and similar
+
+    if imbalanced:
+        X_imgs_train, y_train = _oversample_images(X_imgs_train, y_train, target_ratio=0.3, seed=seed)
+        # inverse-frequency class weights for focal loss
+        classes_w, counts_w = np.unique(y_train, return_counts=True)
+        w = torch.tensor(len(y_train) / (len(classes_w) * counts_w), dtype=torch.float32).to(device)
+        focal_gamma = 2.0
+    # ──────────────────────────────────────────────────────────────────────────
 
     _mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
     _std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
@@ -626,7 +666,15 @@ def train_eval_cnn(
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+
+    if imbalanced:
+        # Focal loss: down-weights easy majority examples, focuses on minority
+        def criterion(logits, targets):
+            ce = F.cross_entropy(logits, targets, weight=w, reduction="none")
+            pt = torch.exp(-ce)
+            return ((1 - pt) ** focal_gamma * ce).mean()
+    else:
+        criterion = nn.CrossEntropyLoss()
 
     best_loss = float("inf")
     no_improve = 0
