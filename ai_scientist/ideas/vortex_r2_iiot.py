@@ -673,18 +673,26 @@ def train_eval_xgboost(X_train, y_train, X_test, y_test, seed=42) -> dict:
     from xgboost import XGBClassifier
     from sklearn.metrics import accuracy_score, f1_score
 
+    # Remap to dense 0-indexed labels using only training classes.
+    # At very low label ratios some classes may be absent from training;
+    # those test samples are mapped to a sentinel (-1) that XGBoost never predicts.
+    train_classes = sorted(set(y_train))
+    c2i = {c: i for i, c in enumerate(train_classes)}
+    y_tr_enc = np.array([c2i[c] for c in y_train], dtype=np.int64)
+    y_te_enc = np.array([c2i.get(c, -1) for c in y_test], dtype=np.int64)
+
     model = XGBClassifier(
         n_estimators=300, max_depth=6, learning_rate=0.1,
         n_jobs=-1, random_state=seed, eval_metric="logloss",
         use_label_encoder=False, verbosity=0,
     )
-    model.fit(X_train, y_train)
-    preds = model.predict(X_test)
+    model.fit(X_train, y_tr_enc)
+    preds_enc = model.predict(X_test)
     probs = model.predict_proba(X_test)
     return {
-        "accuracy": float(accuracy_score(y_test, preds)),
-        "f1": float(f1_score(y_test, preds, average="macro", zero_division=0)),
-        "ece": compute_ece(probs, y_test),
+        "accuracy": float(accuracy_score(y_te_enc, preds_enc)),
+        "f1": float(f1_score(y_te_enc, preds_enc, average="macro", zero_division=0)),
+        "ece": compute_ece(probs, y_te_enc),
     }
 
 
