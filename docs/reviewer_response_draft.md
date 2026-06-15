@@ -1,7 +1,21 @@
-# Vortex-R2 Major Revision: Reviewer Response Draft
+# Vortex-R2 Major Revision: Reviewer Response Letter
 
-> Based on v7 experiment results (N=10 seeds, Wilcoxon signed-rank test)  
-> XGBoost @ 1% steel_plates patched (was crashing on non-contiguous class labels)
+> **Internal draft** — based on v7 experiment results (N=10 seeds, Wilcoxon signed-rank test)
+
+---
+
+## Cover Letter to Editor
+
+Dear Editor,
+
+We thank the reviewers for their thorough and constructive comments. We have substantially revised the manuscript in response to all seven concerns raised. Below we address each point in turn.
+
+**Important note on revised results:** Reviewer Q1 asked us to clarify whether the ResNet-18 backbone was fine-tuned or used as a fixed feature extractor. Upon revisiting the code, we found that the submitted version did not use ResNet-18 at all — the image-based methods used a simpler backbone of 16 fixed random 3×3 convolution filters followed by global/quadrant pooling, which is substantially weaker than a fine-tuned deep CNN. This was an implementation error relative to what was described in the manuscript. In the revision, all image-based methods (Vortex-R2, DeepInsight, IGTD, REFINED, raw_cnn, random_layout) now use a properly fine-tuned ResNet-18 (ImageNet pre-trained, all layers trained end-to-end). This architectural correction is responsible for the change in key findings: with fixed random filters, spatial layout had little effect (negative result); with a trainable CNN, the structured anti-correlation layout of Vortex-R2 provides a meaningful inductive bias that is now statistically detectable. We believe this revised result is a more accurate and more useful characterisation of when structured feature layouts matter.
+
+All other experimental changes (additional datasets, N=10 seeds, random_layout ablation, ECE, compute cost) are direct responses to the reviewers' remaining requests.
+
+Sincerely,  
+[Author names]
 
 ---
 
@@ -37,12 +51,11 @@
 **Reviewer concern:** The paper describes a pre-trained ResNet-18 but it's unclear whether it's fine-tuned or used as a fixed feature extractor.
 
 **Response:**
-The ResNet-18 is fully fine-tuned end-to-end. Specifically, `train_eval_cnn()` loads `models.resnet18(weights="IMAGENET1K_V1")` and modifies the final classification head to match the number of fault classes. All parameters are updated during training (no frozen layers). This is equivalent to fine-tuning rather than feature extraction.
+We thank the reviewer for this question, which led us to identify and correct an implementation error. The submitted manuscript described a ResNet-18 backbone but the actual implementation used 16 fixed random 3×3 convolution filters with ReLU activation and global/quadrant pooling — a substantially weaker architecture that does not train its weights at all. This discrepancy between the described and implemented architecture is corrected in this revision.
 
-The comparison in the submitted version used a fixed feature extractor, which disadvantaged all image-based methods equally. We have clarified this in the revised manuscript (Section 3.2, paragraph 2) and verified that the updated architecture does not change the relative ranking of methods.
+In the revised version, all image-based methods use a properly fine-tuned ResNet-18 (ImageNet pre-trained weights `IMAGENET1K_V1`). The final fully-connected layer is replaced with a linear head matching the number of fault classes. All layer weights are updated end-to-end using Adam (lr=10⁻⁴, weight decay=10⁻⁴, batch size=32, max 50 epochs, early stopping patience=5 on validation loss).
 
-**Suggested text for paper (Section 3.2):**
-> "The CNN backbone (ResNet-18, ImageNet pre-trained) is fine-tuned end-to-end for each dataset. The final fully-connected layer is replaced with a linear head matching the number of fault classes. All layer weights are updated during training using Adam (lr=10⁻⁴, weight decay=10⁻⁴, max 50 epochs with early stopping on validation loss with patience=5)."
+**Why this changes the results:** With fixed random filters, CNN spatial features are essentially random projections regardless of how features are arranged in the image — so any layout performs similarly. With a trainable CNN, the spatial arrangement of features becomes an inductive bias that the network can exploit. The anti-correlation layout of Vortex-R2, which places independent sensors at nearby pixels, now produces a detectable advantage: structured layout (Vortex-R2) significantly outperforms random pixel assignment (random_layout) on 3/4 datasets at 1% labels (p<0.01, Wilcoxon). This revised finding is more meaningful scientifically — it demonstrates the conditions under which structured feature layout provides value.
 
 ---
 
@@ -179,17 +192,39 @@ Unoccupied pixels are set to zero.
 
 | Item | Status | Key result |
 |------|--------|------------|
-| Q1: ResNet-18 fine-tuning clarification | ✅ Text updated | End-to-end fine-tuning, not feature extraction |
+| Q1: ResNet-18 fine-tuning (architecture correction) | ✅ Corrected | Fixed random filters → fine-tuned ResNet-18; explains result change |
 | Q2: Random layout ablation | ✅ Added | 3/4 datasets p<0.01 at 1%; SECOM not significant |
-| Q3: Additional datasets (Steel Plates, CWRU, UCI HAR) | ✅ Added | 4 datasets total |
+| Q3: Additional datasets (Steel Plates, CWRU, UCI HAR) | ✅ Added | 4 datasets total (all real public data) |
 | Q4: N=10 seeds + Wilcoxon | ✅ Done | p<0.01 on 3/4 datasets at 1% |
 | Q5: ECE calibration table | ✅ Added | VR2 lower ECE than random_layout in all 4 datasets |
-| Q6: Compute cost table | ✅ Added | VR2 ≈ DeepInsight; +3% vs random_layout |
-| Q7: Missing equations | ⬜ Add to LaTeX | 4 equations needed (AC loss, rep loss, total, pixel assign) |
+| Q6: Compute cost table | ✅ Added | VR2 ≈ DeepInsight (+3% vs random_layout) |
+| Q7: Missing equations | ✅ Confirmed in LaTeX | 4 equations in Section 3 (AC loss, rep loss, total, pixel assign) |
 
 ---
 
-## Notes / Outstanding Issues
+## Anticipated Reviewer Follow-up Questions
+
+These are the most likely questions in a potential second round of review, with prepared answers.
+
+### "The results changed dramatically — this seems like a new paper, not a revision."
+
+**Answer:** The change is a correction of an implementation error (fixed random filters described as ResNet-18) that was surfaced by Reviewer Q1. The revised experiment runs the architecture that was originally described. The finding that structured layout matters under trainable CNNs is more scientifically coherent than the original negative result, and is consistent with the theoretical motivation in the paper. We are transparent about this in the cover letter and the revised Discussion section.
+
+### "Why is SECOM not significant? Does this weaken the claim?"
+
+**Answer:** SECOM is binary with 6.6% positive rate. At 1% labels (~15 training samples), only ~1 positive sample appears in the labelled pool on average. All methods collapse to near-majority prediction, making layout differences undetectable by any statistical test at this label ratio. The directional advantage (+3.8%) is consistent with the other datasets; SECOM simply requires more labels for the layout effect to emerge. This is a property of the dataset, not of the method. The paper discusses this in Section 4.3 and does not claim the 4th dataset is significant.
+
+### "Tabular methods (CatBoost, LDA) still outperform Vortex-R2 on CWRU and UCI HAR. Why should practitioners use Vortex-R2?"
+
+**Answer:** The paper does not claim Vortex-R2 universally dominates tabular methods. CWRU and UCI HAR have features that are near-perfectly linearly separable (LDA/CatBoost achieve 100%). The claim is that, compared to random pixel assignment, the structured layout significantly improves CNN performance — and Vortex-R2 consistently ranks above all other image-based methods. Practitioners working with IIoT data where tabular methods fail (high-dimensional, non-linearly separable features, or scenarios requiring calibrated probabilities) benefit from the structured layout.
+
+### "The random_layout baseline is randomly seeded — is the comparison fair?"
+
+**Answer:** Yes. random_layout uses a fixed random seed per run (tied to the overall experiment seed), so each of the 10 seed comparisons between Vortex-R2 and random_layout uses a consistent random layout for that seed. The Wilcoxon signed-rank test operates on paired accuracy values (same labelled subset per seed), which controls for data-split variability. The random layouts are diverse across seeds (different pixel assignments), providing a robust average comparison.
+
+---
+
+## Technical Notes
 
 ### SECOM not significant
 SECOM is a binary, heavily imbalanced semiconductor dataset. At 1% labels (15 labeled samples), all methods converge to near-majority-class predictions with high variance. The advantage of structured layout is measurable directionally (+3.8%) but masked by seed variance. This is discussed in Section 4.3.
